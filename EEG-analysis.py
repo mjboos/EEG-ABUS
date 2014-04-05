@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
 """
 Created on Wed Jan 15 20:32:41 2014
 
@@ -15,7 +16,9 @@ from math import fsum
 from scipy.io import loadmat
 import scipy.stats
 from sklearn.decomposition import FastICA
-
+import numpy as np
+import scipy as sp
+import matplotlib.pyplot as plt
 #change this model
 
 path = "/home/mboos/Work/Bayesian Updating/"
@@ -43,18 +46,23 @@ path = "/home/mboos/Work/Bayesian Updating/"
 
 logist = lambda x : 1/(1+exp(-x))
 
-kld_helper = lambda x : (logist(math.fsum(x[:-1])),logist(math.fsum(x)))
+kld_helper = lambda x : (logist(fsum(x[:-1])),logist(fsum(x)))
+
+def channel_weights(w,chan_list = ["Fp1","Fp2","F7","F3","Fz","F4","F8","FC5","FC1","FCz","FC6","T7","C3","Cz","C4","T8","CP5","CP1","CP2","CP6","P7","P3","Pz","P4","P8","TP9","TP10","Oz","O2","O1"]):
+    for s in map(": ".join,zip(chan_list,np.array_str(w).strip("[]").split())):
+        print s
+	
 
 def discrete_kld(dist1,dist2):
     """ returns the kullback leibler divergence of the two distributions over the second- one"""
-    return log(dist2/dist1)*dist2 + log((1-dist2)/(1-dist1))*(1-dist2)
+    return np.log(dist2/dist1)*dist2 + np.log((1-dist2)/(1-dist1))*(1-dist2)
     
 
 def kld_vec(filename,prior,likelihood,path = "/home/mboos/Work/Bayesian Updating/Data/"):
     """ fill in """
     with open(path+filename) as bc_file:
         #second array expression maps the event rare/freq 2/1 to its log likelihood ratio and sums them up with the log prior ratio
-        return np.array([ (int(line.strip("\n").split(" ")[-1]),discrete_kld(*kld_helper([log(prior/(1-prior))]+map(lambda x : log(likelihood[x]/(1-likelihood[x])),map(abs,map(int,line.strip("\n").split(" "))))))) for line in bc_file])
+        return np.array([ (int(line.strip("\n").split(" ")[-1]),discrete_kld(*kld_helper([np.log(prior/(1-prior))]+map(lambda x : np.log(likelihood[x]/(1-likelihood[x])),map(abs,map(int,line.strip("\n").split(" "))))))) for line in bc_file])
 
 
 def interval_feature_extraction(samples,time=1):
@@ -94,7 +102,7 @@ def lppd(fit_obj,X,Y,n_trials):
     sigma_std = pars["sigma_std"]
     lppd = 0
     for i in xrange(n_trials):
-        lppd += log(np.mean(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
+        lppd += np.log(np.mean(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
     return lppd
 
 def lppd_spec(fit_obj,X,Y,n_trials):
@@ -104,7 +112,7 @@ def lppd_spec(fit_obj,X,Y,n_trials):
     sigma_std = pars["sigma_std"]
     lppd = 0
     for i in xrange(int(np.round(n_trials/5,0))):
-        ll = log(np.mean(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
+        ll = np.log(np.mean(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
         print "Posterior: {0} LL: {1}".format(logist(Y[i]),ll)
         lppd += ll
     return lppd
@@ -116,7 +124,7 @@ def waic(fit_obj,X,Y,n_trials):
     sigma_std = pars["sigma_std"]
     pd = 0
     for i in xrange(n_trials):
-        pd += np.var(log(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
+        pd += np.var(np.log(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
     return lppd(fit_obj,X,Y,n_trials) - pd
 
 
@@ -125,11 +133,11 @@ def get_bclass(filename,prior,likelihood,path = "/home/mboos/Work/Bayesian Updat
     likelihood needs to be a dict with likelihood values for 1/2"""
     with open(path+filename) as bc_file:
         #second array expression maps the event rare/freq 2/1 to its log likelihood ratio and sums them up with the log prior ratio
-        return np.array([ (int(line.strip("\n").split(" ")[-1]),log(prior/(1-prior))+math.fsum(map(lambda x : log(likelihood[x]/(1-likelihood[x])),map(abs,map(int,line.strip("\n").split(" ")))))) for line in bc_file])
+        return np.array([ (int(line.strip("\n").split(" ")[-1]),np.log(prior/(1-prior))+fsum(map(lambda x : np.log(likelihood[x]/(1-likelihood[x])),map(abs,map(int,line.strip("\n").split(" ")))))) for line in bc_file])
 
 def get_bclass_diff(filename,likelihood,path = "/home/mboos/Work/Bayesian Updating/Data/"):
     """Returns N x 2 array, first column consisting of 1/2 the second of the log-odds likelihood of that ball"""
-    lo = lambda x : log(likelihood[x]/(1-likelihood[x]))
+    lo = lambda x : np.log(likelihood[x]/(1-likelihood[x]))
     with open(path+filename) as bc_file:
         return np.array([ (int(line.strip("\n").split(" ")[-1]),lo(map(abs,map(int,line.strip("\n").split(" ")))[-1])) for line in bc_file])
 
@@ -775,21 +783,85 @@ for fn in files:
 
 
 
+#test_set_1 = np.reshape(np.swapaxes(mat_dict["01"],1,2),(30,-1))
+#test_set_2 = np.reshape(np.swapaxes(mat_dict["02"],1,2),(30,-1))
+#
+#ica.fit(test_set_1.T)
+#m1 = ica.mixing_
+#ica.fit(test_set_2.T)
+#m2 = ica.mixing_
+#norm1 = np.apply_along_axis(np.linalg.norm,0,m1)
+#norm2 = np.apply_along_axis(np.linalg.norm,0,m2)
+#nm1 = np.apply_along_axis(lambda x : x/norm1,1,m1)
+#nm2 = np.apply_along_axis(lambda x : x/norm2,1,m2)
+#sim_mat = np.dot(nm1.T,nm2)
+##use ICA for every epoch and all datapoints
+#now test this for every person
+
+################################
+#NOW do an ICA for every participant
+
+#%%
 ica = FastICA()
 
-test_set_1 = np.reshape(np.swapaxes(mat_dict["01"],1,2),(30,-1))
-test_set_2 = np.reshape(np.swapaxes(mat_dict["02"],1,2),(30,-1))
+ica_dict = dict()
+for k in sorted(mat_dict.keys()):
+	ica.fit(np.reshape(np.swapaxes(mat_dict["01"],1,2),(30,-1)).T)
+	ica_dict[k] = ica.mixing_
 
-ica.fit(test_set_1.T)
-m1 = ica.mixing_
-ica.fit(test_set_2.T)
-m2 = ica.mixing_
-norm1 = np.apply_along_axis(np.linalg.norm,0,m1)
-norm2 = np.apply_along_axis(np.linalg.norm,0,m2)
-nm1 = np.apply_along_axis(lambda x : x/norm1,1,m1)
-nm2 = np.apply_along_axis(lambda x : x/norm2,1,m2)
-sim_mat = np.dot(nm1.T,nm2)
-#use ICA for every epoch and all datapoints
+#now think about a good way to compare them	
+#do an ICA over all pbs
+all_sources = ica.fit_transform(np.hstack([np.reshape(np.swapaxes(mat_dict[k],1,2),(30,-1)) for k in sorted(mat_dict.keys())]).T)
+all_pb_mixing = ica.mixing_
+
+
+#now order the ICs of the individuals according to their similarity to the mixing matrix of all pbs
+#but first: you can try to do an analysis with the ICs of all persons
+
+#maybe check ICs first
+#plot the mean ICs grouped by different values of the posterior
+#first round them up to 2 decimals
+
+for k in bc_dict.keys():
+    bc_dict[k] = np.round(bc_dict[k],decimals=2)
+
+#%%
+
+sizes_list = [ mat_dict[m].shape[2] for m in sorted(mat_dict.keys()) ]
+pb_epoch_index = [ sum(sizes_list[:i])*250 for i in xrange(1,len(sizes_list))]
+
+#now get the activations back into original form
+
+all_sources = all_sources.T
+pb_list_of_sources = np.hsplit(all_sources,pb_epoch_index)
+
+source_dict = { k : np.reshape(pb_list_of_sources[i],(30,-1,250)) for i,k in enumerate(sorted(mat_dict.keys())) }
+
+#now get the means
+
+mean_source_per_post = dict()
+
+for p in np.unique(bc_dict["01"]):
+    mean_sources = np.ones((1,250))
+    for i in xrange(source_dict["01"].shape[0]):
+        mean_sources = np.vstack([mean_sources,np.mean(np.vstack([source_dict[k][i,bc_dict[k]==p] for k in sorted(source_dict.keys()) if p in np.unique(bc_dict[k])]),axis=0)])
+    mean_source_per_post[p] = mean_sources[1:,:]
+
+for i in xrange(10):
+    plt.subplot(2,5,i+1)
+    for j,k in enumerate(mean_source_per_post.keys()):
+         plt.plot(mean_source_per_post[k][i,:],['r','g','b','c','m','y','k','w','0.75'][j])
+
+
+
+
+
+
+
+
+
+
+
 
 
 
