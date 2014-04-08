@@ -53,10 +53,9 @@ def plot_for_components(mean_source_per_post,clist,nbin=20):
         cols = int(np.ceil(float(len(clist))/rows))
         f,splots = plt.subplots(rows,cols)
     f.tight_layout()
-    for i,ax in enumerate(splots.flatten()):
-        if i < len(clist):
-            for j,k in enumerate(sorted(kbin_source_per_post.keys())):
-                ax.plot(kbin_source_per_post[k][clist[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=k)
+    for i,ax in enumerate(splots.flatten()[:len(clist)]):
+        for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+            ax.plot(kbin_source_per_post[k][clist[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=k)
     f.legend(*splots.flatten()[0].get_legend_handles_labels(),loc=4)
     
 
