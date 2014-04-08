@@ -9,6 +9,7 @@ Created on Wed Jan 15 20:32:41 2014
 
 
 #import re
+from functools import partial
 import os
 import pystan
 import pandas as pd
@@ -43,10 +44,36 @@ path = "/home/mboos/Work/Bayesian Updating/"
 #TODO: visualize the likelihoods and data, either a lot of likelihoods vs data or just a couple
 #TODO: transform posteriors for KLD
 
+def plot_for_components(mean_source_per_post,clist,nbin=20):
+    kbin_source_per_post = { key : k_bin_average(mean_source_per_post[key],nbin) for key in mean_source_per_post.keys() }
+    if len(clist) < 4:
+        f,splots = plt.subplots(len(clist),1,sharex=True,sharey=True)
+    else:
+        rows = ([i for i in [2,3,4] if len(clist) % i == 0]+[2 if len(clist) < 8 else 3])[0]
+        cols = int(np.ceil(float(len(clist))/rows))
+        f,splots = plt.subplots(rows,cols)
+    f.tight_layout()
+    for i,ax in enumerate(splots.flatten()):
+        if i < len(clist):
+            for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+                ax.plot(kbin_source_per_post[k][clist[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=k)
+    f.legend(*splots.flatten()[0].get_legend_handles_labels(),loc=4)
+    
 
-logist = lambda x : 1/(1+exp(-x))
+
+logist = lambda x : 1/(1+np.exp(-x))
 
 kld_helper = lambda x : (logist(fsum(x[:-1])),logist(fsum(x)))
+
+#TODO: do this function
+#def display_ICs_per_cat():
+#    ''' placeholder '''
+#    for i in xrange(10):
+#        plt.subplot(2,5,i+1)
+#        for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+#        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
+
+
 
 def channel_weights(w,chan_list = ["Fp1","Fp2","F7","F3","Fz","F4","F8","FC5","FC1","FCz","FC6","T7","C3","Cz","C4","T8","CP5","CP1","CP2","CP6","P7","P3","Pz","P4","P8","TP9","TP10","Oz","O2","O1"]):
     for s in map(": ".join,zip(chan_list,np.array_str(w).strip("[]").split())):
@@ -560,8 +587,8 @@ for k in bc_dict.keys():
 
 #%%
 #prepare data, n_ep, n_chan, n_bin, n_pb
-n_ep_list = [mat_dict[k].shape[2] for k in sorted(mat_dict.iterkeys())]
-data_all_e80 = { "n_ep" : sum(n_ep_list),"n_pb" : 15, "n_bin" : nbin,"n_chan" : 30, "dats" : np.concatenate([mat_dict[m] for m in sorted(mat_dict.iterkeys())],axis=2),"pbs" : np.repeat(np.arange(1,16),n_ep_list),"X" : np.concatenate([bc_dict[k] for k in sorted(bc_dict.iterkeys())])}
+n_ep_list = [mat_dict[k].shape[2] for k in sorted(mat_dict.keys())]
+data_all_e80 = { "n_ep" : sum(n_ep_list),"n_pb" : 15, "n_bin" : nbin,"n_chan" : 30, "dats" : np.concatenate([mat_dict[m] for m in sorted(mat_dict.keys())],axis=2),"pbs" : np.repeat(np.arange(1,16),n_ep_list),"X" : np.concatenate([bc_dict[k] for k in sorted(bc_dict.keys())])}
 #%%
 #kills whole process
 #fit = pystan.stan(model_code=eeg_model_for_all, data=data_all_e80,iter=500, chains=2)
@@ -578,8 +605,8 @@ data_dict  = { m : mat_dict[m][[7,8,9,10,12,13,14],10:18,:] for m in mat_dict.ke
 #%%
 #prepare data, n_ep, n_chan, n_bin, n_pb
 #change this so it's only part of the data
-n_ep_list = [data_dict[k].shape[2] for k in sorted(data_dict.iterkeys())]
-data_all_e80 = { "n_ep" : sum(n_ep_list),"n_pb" : 15, "n_bin" : 8,"n_chan" : 7, "dats" : np.concatenate([data_dict[m] for m in sorted(data_dict.iterkeys())],axis=2),"pbs" : np.repeat(np.arange(1,16),n_ep_list),"X" : np.concatenate([kld_dict[k] for k in sorted(kld_dict.iterkeys())])}
+n_ep_list = [data_dict[k].shape[2] for k in sorted(data_dict.keys())]
+data_all_e80 = { "n_ep" : sum(n_ep_list),"n_pb" : 15, "n_bin" : 8,"n_chan" : 7, "dats" : np.concatenate([data_dict[m] for m in sorted(data_dict.keys())],axis=2),"pbs" : np.repeat(np.arange(1,16),n_ep_list),"X" : np.concatenate([kld_dict[k] for k in sorted(kld_dict.keys())])}
 
 #%%
 
@@ -593,8 +620,8 @@ fit = pystan.stan(model_code=eeg_model_for_all, data=data_all_e80,iter=1000, cha
 #%%
 #data for reverse model
 
-n_ep_list = [data_dict[k].shape[2] for k in sorted(data_dict.iterkeys())]
-data_reverse_e80 = { "n_ep" : sum(n_ep_list),"n_pb" : 15, "n_bin" : 8,"n_chan" : 2, "amplitudes" : np.concatenate([data_dict[m] for m in sorted(data_dict.iterkeys())],axis=2).swapaxes(0,2).swapaxes(1,2),"pbs" : np.repeat(np.arange(1,16),n_ep_list),"X" : np.concatenate([bc_dict[k] for k in sorted(bc_dict.iterkeys())])}
+n_ep_list = [data_dict[k].shape[2] for k in sorted(data_dict.keys())]
+data_reverse_e80 = { "n_ep" : sum(n_ep_list),"n_pb" : 15, "n_bin" : 8,"n_chan" : 2, "amplitudes" : np.concatenate([data_dict[m] for m in sorted(data_dict.keys())],axis=2).swapaxes(0,2).swapaxes(1,2),"pbs" : np.repeat(np.arange(1,16),n_ep_list),"X" : np.concatenate([bc_dict[k] for k in sorted(bc_dict.keys())])}
 
 #%%
 #standardize data for reversed model
@@ -623,9 +650,9 @@ data_dict  = { m : mat_dict[m][[7,8,9,10,12,13,14],10:18,:] for m in mat_dict.ke
 
 #reverse model with feature vector
 
-n_ep_list = [data_dict[k].shape[2] for k in sorted(data_dict.iterkeys())]
+n_ep_list = [data_dict[k].shape[2] for k in sorted(data_dict.keys())]
 
-data_reverse_ft_e80 = { "n_ep" : sum(n_ep_list),"n_ft" : 7*8, "amplitudes" : np.vstack([data_dict[m][...,i].flatten() for m in sorted(data_dict.iterkeys()) for i in xrange(data_dict[m].shape[-1])]),"X" : np.concatenate([kld_dict[k] for k in sorted(kld_dict.iterkeys())])}
+data_reverse_ft_e80 = { "n_ep" : sum(n_ep_list),"n_ft" : 7*8, "amplitudes" : np.vstack([data_dict[m][...,i].flatten() for m in sorted(data_dict.keys()) for i in xrange(data_dict[m].shape[-1])]),"X" : np.concatenate([kld_dict[k] for k in sorted(kld_dict.keys())])}
 
 #%%
 #normalize features
@@ -659,9 +686,9 @@ data_avr_dict  = { m : ERP_avr_dict[m][[7,8,9,10,12,13,14],10:18,:] for m in ERP
 
 post_dict = { k : np.unique(np.round(bc_dict[k],2)) for k in bc_dict.keys()}
 
-n_ep_list = [data_avr_dict[k].shape[2] for k in sorted(data_avr_dict.iterkeys())]
+n_ep_list = [data_avr_dict[k].shape[2] for k in sorted(data_avr_dict.keys())]
 
-data_reverse_ft_avr_e80 = { "n_ep" : sum(n_ep_list),"n_ft" : 7*8, "amplitudes" : np.vstack([data_avr_dict[m][...,i].flatten() for m in sorted(data_avr_dict.iterkeys()) for i in xrange(data_avr_dict[m].shape[-1])]),"X" : np.concatenate([post_dict[k] for k in sorted(post_dict.iterkeys())])}
+data_reverse_ft_avr_e80 = { "n_ep" : sum(n_ep_list),"n_ft" : 7*8, "amplitudes" : np.vstack([data_avr_dict[m][...,i].flatten() for m in sorted(data_avr_dict.keys()) for i in xrange(data_avr_dict[m].shape[-1])]),"X" : np.concatenate([post_dict[k] for k in sorted(post_dict.keys())])}
 
 #%%
 
@@ -729,7 +756,7 @@ for sp,n in enumerate(np.unique(np.round(bclass[:,1],decimals=2))):
 # do interval feature extraction for the relevant channels and timebins
 # use the model with no individual differences ft_std
 
-#IFE_dict = { m : np.vstack([np.concatenate([interval_feature_extraction(mat_dict[m][i,10:18,j]).flatten() for i in xrange(mat_dict[m].shape[0])]) for j in xrange(mat_dict[m].shape[2])]) for m in sorted(mat_dict.iterkeys()) }
+#IFE_dict = { m : np.vstack([np.concatenate([interval_feature_extraction(mat_dict[m][i,10:18,j]).flatten() for i in xrange(mat_dict[m].shape[0])]) for j in xrange(mat_dict[m].shape[2])]) for m in sorted(mat_dict.keys()) }
 
 
 #too many features
@@ -804,12 +831,12 @@ for fn in files:
 #%%
 ica = FastICA()
 
-ica_dict = dict()
-for k in sorted(mat_dict.keys()):
-	ica.fit(np.reshape(np.swapaxes(mat_dict["01"],1,2),(30,-1)).T)
-	ica_dict[k] = ica.mixing_
-
-#now think about a good way to compare them	
+#ica_dict = dict()
+#for k in sorted(mat_dict.keys()):
+#	ica.fit(np.reshape(np.swapaxes(mat_dict["01"],1,2),(30,-1)).T)
+#	ica_dict[k] = ica.mixing_
+#
+##now think about a good way to compare them	
 #do an ICA over all pbs
 all_sources = ica.fit_transform(np.hstack([np.reshape(np.swapaxes(mat_dict[k],1,2),(30,-1)) for k in sorted(mat_dict.keys())]).T)
 all_pb_mixing = ica.mixing_
@@ -841,27 +868,63 @@ source_dict = { k : np.reshape(pb_list_of_sources[i],(30,-1,250)) for i,k in enu
 
 mean_source_per_post = dict()
 
+#creates a dictionary of source activations per posterior probability
+
 for p in np.unique(bc_dict["01"]):
     mean_sources = np.ones((1,250))
     for i in xrange(source_dict["01"].shape[0]):
         mean_sources = np.vstack([mean_sources,np.mean(np.vstack([source_dict[k][i,bc_dict[k]==p] for k in sorted(source_dict.keys()) if p in np.unique(bc_dict[k])]),axis=0)])
     mean_source_per_post[p] = mean_sources[1:,:]
 
+#now do the same for kullback-leibler-divergence
+
+#now order the components by their explained variance
+#compute predicted EEG timeseries (column of mixing matrix of that component * its activations) 
+#and cross-correlate with the real timeseries
+
+correlations = np.empty((30))
+for i in xrange(all_pb_mixing.shape[1]):
+    predicted_ts = np.dot(np.reshape(all_pb_mixing[:,i],(all_pb_mixing[:,i].shape[0],1)),np.reshape(all_sources[i,:],(1,all_sources[i,:].shape[0])))
+    correlations[i] = np.corrcoef(np.vstack([predicted_ts.flatten(),np.hstack([np.reshape(np.swapaxes(mat_dict[k],1,2),(30,-1)) for k in sorted(mat_dict.keys())]).flatten()]))[0,1]
+
+corr_idx_sorted = np.argsort(correlations)
+
+#%%
+
+kbin_source_per_post = { s : k_bin_average(mean_source_per_post[s][:150],20) for s in mean_source_per_post.keys() }
+
+#plots the averaged sources for the first 10 components with the highest explained variance for each posterior (different colors)
 for i in xrange(10):
     plt.subplot(2,5,i+1)
-    for j,k in enumerate(mean_source_per_post.keys()):
-         plt.plot(mean_source_per_post[k][i,:],['r','g','b','c','m','y','k','w','0.75'][j])
+    for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
+
+
+for i,k in enumerate(sorted(kbin_source_per_post.keys())):
+    plt.subplot(3,3,i+1)
+    plt.title(str(k))
+    for j in xrange(5):
+        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[j],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
+
+for i in xrange(3):
+    plt.subplot(3,1,i+1)
+    for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+        plt.plot(kbin_source_per_post[k][[12,7,6][i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=str(k))
 
 
 
 
 
+#%%
+#TODO: Kullback-Leibler-Divergence re-check
+
+#now test this with the simple reverse ft model
+#averages and uses only the data from 100 to 500 ms
+#now each entry is again components x times x epochs
+source_d_data = { k : k_bin_average(np.swapaxes(source_dict[k],1,2),40)[list(reversed(corr_idx_sorted))[:10],4:20,:] for k in source_dict.keys() }
+n_ep_list = sizes_list
+source_data = { "n_ep" : sum(n_ep_list),"n_ft" : 16*10, "amplitudes" : np.vstack([source_d_data[m][...,i].flatten() for m in sorted(source_d_data.keys()) for i in xrange(source_d_data[m].shape[-1])]),"X" : np.concatenate([bc_dict[k] for k in sorted(bc_dict.keys())])}
 
 
 
-
-
-
-
-
-
+#fit = pystan.stan(model_code=eeg_model_reversed_ft_std, data=source_data,iter=500, chains=5)
