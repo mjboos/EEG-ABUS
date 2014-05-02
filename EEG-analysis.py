@@ -20,6 +20,7 @@ from sklearn.decomposition import FastICA
 import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
+
 #change this model
 
 path = "/home/mboos/Work/Bayesian Updating/"
@@ -42,7 +43,35 @@ path = "/home/mboos/Work/Bayesian Updating/"
 #    return lppd
 
 #TODO: visualize the likelihoods and data, either a lot of likelihoods vs data or just a couple
-#TODO: transform posteriors for KLD
+#TODO: kick out outliers
+def plot_IC_KLD(fit_obj,sources,klds):
+    """Expects a stan fit object, the matrix of sources as given to the KLD model and the Kullback-Leibler-Divergences. Creates plots for the 6 components with the highest prediction"""
+    theta_means = np.mean(fit_obj.get_posterior_mean()[:160,:],axis=1)
+    #theta_w = np.argsort([ np.sum(source_times_weights) for source_times_weights in np.split(np.abs(theta_means),10)])[::-1]
+    theta_w = np.argsort(np.abs(theta_means))[::-1]
+    for i,idx in enumerate(theta_w[:6]):
+        plt.subplot(2,3,i+1)
+        plt.plot(klds,sources[:,idx],"o")
+        plt.title("source: "+str(idx/16)+" timepoint:"+str(idx%16*25+100))
+
+
+def get_residuals_for_model(fit_obj,Y,X):
+    """Returns a n x 1 vector of residuals for the reverse_ft_std model with mean of parameter values from fit_obj, and data from Y and X
+    :param: fit_obj: a stan-fit object from the reverse_ft_std model
+    :param: Y: vector of length n of the posteriors or KLDs to predict
+    :param: X: matrix of dimension n x p of the channels or ICs to predict with
+    :return: vector of length n"""
+
+    theta_means = np.mean(fit_obj.get_posterior_mean()[:X.shape[1],:],axis=1)
+    predictions = np.dot(X,theta_means)
+    return Y-predictions
+
+
+
+   
+
+
+
 
 def plot_for_components(mean_source_per_post,clist,nbin=20):
     kbin_source_per_post = { key : k_bin_average(mean_source_per_post[key],nbin) for key in mean_source_per_post.keys() }
@@ -63,14 +92,6 @@ def plot_for_components(mean_source_per_post,clist,nbin=20):
 logist = lambda x : 1/(1+np.exp(-x))
 
 kld_helper = lambda x : (logist(fsum(x[:-1])),logist(fsum(x)))
-
-#TODO: do this function
-#def display_ICs_per_cat():
-#    ''' placeholder '''
-#    for i in xrange(10):
-#        plt.subplot(2,5,i+1)
-#        for j,k in enumerate(sorted(kbin_source_per_post.keys())):
-#        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
 
 
 
@@ -398,7 +419,7 @@ X ~ normal(amplitudes*theta,sigma_std);
 #trials * (chan*bin)
 #non-hierarchic, non pb difference
 
-eeg_model_kdl_reversed_ft_std = """
+eeg_model_kld_reversed_ft_std = """
 data {
 
 int<lower=0> n_ep;
@@ -893,23 +914,23 @@ corr_idx_sorted = np.argsort(correlations)
 kbin_source_per_post = { s : k_bin_average(mean_source_per_post[s][:150],20) for s in mean_source_per_post.keys() }
 
 #plots the averaged sources for the first 10 components with the highest explained variance for each posterior (different colors)
-for i in xrange(10):
-    plt.subplot(2,5,i+1)
-    for j,k in enumerate(sorted(kbin_source_per_post.keys())):
-        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
-
-
-for i,k in enumerate(sorted(kbin_source_per_post.keys())):
-    plt.subplot(3,3,i+1)
-    plt.title(str(k))
-    for j in xrange(5):
-        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[j],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
-
-for i in xrange(3):
-    plt.subplot(3,1,i+1)
-    for j,k in enumerate(sorted(kbin_source_per_post.keys())):
-        plt.plot(kbin_source_per_post[k][[12,7,6][i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=str(k))
-
+#for i in xrange(10):
+#    plt.subplot(2,5,i+1)
+#    for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+#        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
+#
+#
+#for i,k in enumerate(sorted(kbin_source_per_post.keys())):
+#    plt.subplot(3,3,i+1)
+#    plt.title(str(k))
+#    for j in xrange(5):
+#        plt.plot(kbin_source_per_post[k][list(reversed(corr_idx_sorted))[j],:],['r','g','b','c','m','y','k','0.25','0.75'][j])
+#
+#for i in xrange(3):
+#    plt.subplot(3,1,i+1)
+#    for j,k in enumerate(sorted(kbin_source_per_post.keys())):
+#        plt.plot(kbin_source_per_post[k][[12,7,6][i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=str(k))
+#
 
 
 
@@ -922,8 +943,42 @@ for i in xrange(3):
 #now each entry is again components x times x epochs
 source_d_data = { k : k_bin_average(np.swapaxes(source_dict[k],1,2),40)[list(reversed(corr_idx_sorted))[:10],4:20,:] for k in source_dict.keys() }
 n_ep_list = sizes_list
+
+#use this for the normal posterior model
 source_data = { "n_ep" : sum(n_ep_list),"n_ft" : 16*10, "amplitudes" : np.vstack([source_d_data[m][...,i].flatten() for m in sorted(source_d_data.keys()) for i in xrange(source_d_data[m].shape[-1])]),"X" : np.concatenate([bc_dict[k] for k in sorted(bc_dict.keys())])}
 
+source_data["amplitudes"] = np.hstack([np.ones((source_data["amplitudes"].shape[0],1)),source_data["amplitudes"]])
+source_data["n_ft"] += 1
+#%%
 
+#start model
+fit = pystan.stan(model_code=eeg_model_reversed_ft_std, data=source_data,iter=500, chains=5)
 
-#fit = pystan.stan(model_code=eeg_model_reversed_ft_std, data=source_data,iter=500, chains=5)
+#Kullback Leibler Divergence
+nbin = 1#doesnt matter, curr isnt used, only to ensure that we have an estimate of the number of epochs 
+kld_dict = dict()
+
+for fn in files:
+    if fn.startswith("TS") and pattern_TS in fn:
+        f_ep = get_failed_epochs(fn)
+        kld = kld_vec(fn,prior,likelihood)
+        #re-reference and average over k bins
+        #also think about better way to ensure the result is unique!
+        curr = k_bin_average(rereference(loadmat(path_mat+filter(lambda x : fn[4:6] in x and pattern in x and "epochs" in x,mat_files)[0])["EEGdata"][:30,50:,:]),nbin)
+        if curr.shape[2] != sum(kld[:,0]>0):
+            continue
+        if f_ep.size % 4 != 0:
+            print "error at " + fn
+            break
+        kld_dict[fn[4:6]] = kld[f_ep==1,1]
+
+source_data = { "n_ep" : sum(n_ep_list),"n_ft" : 16*10, "amplitudes" : np.vstack([source_d_data[m][...,i].flatten() for m in sorted(source_d_data.keys()) for i in xrange(source_d_data[m].shape[-1])]),"X" : np.concatenate([kld_dict[k] for k in sorted(kld_dict.keys())])}
+
+#now standardize them
+source_data["amplitudes"] = (source_data["amplitudes"] - np.mean(source_data["amplitudes"],axis=0,keepdims=True))/np.std(source_data["amplitudes"],axis=0,keepdims=True) 
+#now add intercept term
+#source_data["amplitudes"] = np.hstack([np.ones((source_data["amplitudes"].shape[0],1)),source_data["amplitudes"]])
+#source_data["n_ft"] += 1
+#standardizing KLDs
+source_data["X"] = (source_data["X"] - np.mean(source_data["X"]))/np.std(source_data["X"])
+fit = pystan.stan(model_code=eeg_model_kld_reversed_ft_std , data=source_data,iter=500, chains=5)
