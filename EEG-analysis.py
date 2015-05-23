@@ -9,6 +9,8 @@ Created on Wed Jan 15 20:32:41 2014
 
 
 #import re
+from helper_functions
+import matplotlib.colors as colors
 from functools import partial
 import os
 import pystan
@@ -20,209 +22,55 @@ from sklearn.decomposition import FastICA
 import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
-
+from sklearn.linear_model import ElasticNetCV,RidgeCV,Ridge
+from sklearn.cross_validation import train_test_split
+from sklearn.grid_search import GridSearchCV,RandomizedSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+from sklearn.svm import SVR,NuSVR
+from scipy.fftpack import fft
 #change this model
 
-path = "/home/mboos/Work/Bayesian Updating/"
 
-#lppd for old model
-#def lppd(fit_obj,X,Y):
-#    """Computes Log Posterior predictive density using a stan fit_obj and a data object.
-#    Uses a simple linear model for likelihood"""
-#    #X and Y in same form as in stan model
-#    #p_vec = ...n
-#    #sigma = ...
-#    lppd = 0
-#    #now get the ideal values for each pb,epoch,chan,bin
-#    for pb in xrange(n_pb):
-#        for ep in xrange(n_ep):
-#            for t in xrange(n_bin):
-#                for c in xrange(chan_bin):
-#                    lppd += np.mean(norm.pdf(Y[pb,ep,t,c],loc=X[pb,ep]*p_vec[t,c],scale=sigma))
-#    
-#    return lppd
+chan_list = np.array(["Fp1","Fp2","F7","F3","Fz","F4","F8","FC5","FC1","FCz","FC6","T7","C3","Cz","C4","T8","CP5","CP1","CP2","CP6","P7","P3","Pz","P4","P8","TP9","TP10","Oz","O2","O1"])
 
-#TODO: visualize the likelihoods and data, either a lot of likelihoods vs data or just a couple
-#TODO: kick out outliers
-def plot_IC_KLD(fit_obj,sources,klds):
-    """Expects a stan fit object, the matrix of sources as given to the KLD model and the Kullback-Leibler-Divergences. Creates plots for the 6 components with the highest prediction"""
-    theta_means = np.mean(fit_obj.get_posterior_mean()[:160,:],axis=1)
-    #theta_w = np.argsort([ np.sum(source_times_weights) for source_times_weights in np.split(np.abs(theta_means),10)])[::-1]
-    theta_w = np.argsort(np.abs(theta_means))[::-1]
-    for i,idx in enumerate(theta_w[:6]):
-        plt.subplot(2,3,i+1)
-        plt.plot(klds,sources[:,idx],"o")
-        plt.title("source: "+str(idx/16)+" timepoint:"+str(idx%16*25+100))
+#%%
+from sklearn.base import BaseEstimator
+from sklearn.linear_model import LinearRegression
 
-
-def get_residuals_for_model(fit_obj,Y,X):
-    """Returns a n x 1 vector of residuals for the reverse_ft_std model with mean of parameter values from fit_obj, and data from Y and X
-    :param: fit_obj: a stan-fit object from the reverse_ft_std model
-    :param: Y: vector of length n of the posteriors or KLDs to predict
-    :param: X: matrix of dimension n x p of the channels or ICs to predict with
-    :return: vector of length n"""
-
-    theta_means = np.mean(fit_obj.get_posterior_mean()[:X.shape[1],:],axis=1)
-    predictions = np.dot(X,theta_means)
-    return Y-predictions
-
-
-
-   
-
-
-
-
-def plot_for_components(mean_source_per_post,clist,nbin=20):
-    kbin_source_per_post = { key : k_bin_average(mean_source_per_post[key],nbin) for key in mean_source_per_post.keys() }
-    if len(clist) < 4:
-        f,splots = plt.subplots(len(clist),1,sharex=True,sharey=True)
-    else:
-        rows = ([i for i in [2,3,4] if len(clist) % i == 0]+[2 if len(clist) < 8 else 3])[0]
-        cols = int(np.ceil(float(len(clist))/rows))
-        f,splots = plt.subplots(rows,cols)
-    f.tight_layout()
-    for i,ax in enumerate(splots.flatten()[:len(clist)]):
-        for j,k in enumerate(sorted(kbin_source_per_post.keys())):
-            ax.plot(kbin_source_per_post[k][clist[i],:],['r','g','b','c','m','y','k','0.25','0.75'][j],label=k)
-    f.legend(*splots.flatten()[0].get_legend_handles_labels(),loc=4)
+#create a supervised PCA class
+class UnivariateCorrelationThreshold(BaseEstimator):
+    """ ... """
+    #assumes standardized values
     
-
-
-logist = lambda x : 1/(1+np.exp(-x))
-
-kld_helper = lambda x : (logist(fsum(x[:-1])),logist(fsum(x)))
-
-
-
-def channel_weights(w,chan_list = ["Fp1","Fp2","F7","F3","Fz","F4","F8","FC5","FC1","FCz","FC6","T7","C3","Cz","C4","T8","CP5","CP1","CP2","CP6","P7","P3","Pz","P4","P8","TP9","TP10","Oz","O2","O1"]):
-    for s in map(": ".join,zip(chan_list,np.array_str(w).strip("[]").split())):
-        print s
-	
-
-def discrete_kld(dist1,dist2):
-    """ returns the kullback leibler divergence of the two distributions over the second- one"""
-    return np.log(dist2/dist1)*dist2 + np.log((1-dist2)/(1-dist1))*(1-dist2)
+    def __init__(self,correlation_threshold=0.2):
+        self.correlation_threshold = correlation_threshold
     
-
-def kld_vec(filename,prior,likelihood,path = "/home/mboos/Work/Bayesian Updating/Data/"):
-    """ fill in """
-    with open(path+filename) as bc_file:
-        #second array expression maps the event rare/freq 2/1 to its log likelihood ratio and sums them up with the log prior ratio
-        return np.array([ (int(line.strip("\n").split(" ")[-1]),discrete_kld(*kld_helper([np.log(prior/(1-prior))]+map(lambda x : np.log(likelihood[x]/(1-likelihood[x])),map(abs,map(int,line.strip("\n").split(" "))))))) for line in bc_file])
-
-
-def interval_feature_extraction(samples,time=1):
-    """Returns interval features for all the samples, mean amplitude, std and covariance with timevariable
-    as a 3 x number of intervals array"""
-    
-    intervals = array([ array([np.mean(samples[:2**i]),np.std(samples[:2**i]),(1/(2**i))*np.dot(samples[:2**i],np.arange(time,time+2**i).T)-np.mean(samples[:2**i])*((time+2**i-1)/2)]) for i in xrange(1,int(np.trunc(np.log2(len(samples))))+1) ]).T
-    
-    if len(samples) == 2:
-        return intervals
-    else:
-        return np.append(intervals,interval_feature_extraction(samples[1:],time+1),axis=1)
-
-def vis_pred(fit_obj,X,Y,n_trials):
-    """Plots Predictions on y Axis against actual Posteriors on X Axis"""
-    theta,sigma = np.split(np.mean(fit_obj.get_posterior_mean()[:-1,:],axis=1),[57])
-    figure()    
-    plot(Y,np.dot(X,theta),"bo")
-    ca = gca()
-    ca.set_autoscale_on(False)
-    ca.plot(ca.get_xlim(),ca.get_xlim(),"r")
-
-def vis_res(fit_obj,X,Y,n_trials):
-    """Plots (1) Residuals on Y against data on X, (2) Residuals on Y against normal with mean 0 and variance sigma"""
-    theta,sigma = np.split(np.mean(fit_obj.get_posterior_mean()[:-1,:],axis=1),[57])
-    residuals = (Y-np.dot(X,theta))
-    figure(1)
-    subplot(211)
-    plot(Y,residuals,"bo")
-    subplot(212)
-    scipy.stats.probplot(residuals,sparams=(0,sigma))
-
-def lppd(fit_obj,X,Y,n_trials):
-    """Computes the log posterior predictive density using a stan fit object and data Y (the log-odds) and Y (a matrix trials X features)"""
-    pars = fit_obj.extract(pars=["theta","sigma_std"],permuted=True)
-    theta = pars["theta"]
-    sigma_std = pars["sigma_std"]
-    lppd = 0
-    for i in xrange(n_trials):
-        lppd += np.log(np.mean(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
-    return lppd
-
-def lppd_spec(fit_obj,X,Y,n_trials):
-    """Computes the log posterior predictive density using a stan fit object and data Y (the log-odds) and Y (a matrix trials X features)"""
-    pars = fit_obj.extract(pars=["theta","sigma_std"],permuted=True)
-    theta = pars["theta"]
-    sigma_std = pars["sigma_std"]
-    lppd = 0
-    for i in xrange(int(np.round(n_trials/5,0))):
-        ll = np.log(np.mean(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
-        print "Posterior: {0} LL: {1}".format(logist(Y[i]),ll)
-        lppd += ll
-    return lppd
-
-def waic(fit_obj,X,Y,n_trials):
-    """Computes the log posterior predictive density using a stan fit object and data Y (the log-odds) and Y (a matrix trials X features)"""
-    pars = fit_obj.extract(pars=["theta","sigma_std"],permuted=True)
-    theta = pars["theta"]
-    sigma_std = pars["sigma_std"]
-    pd = 0
-    for i in xrange(n_trials):
-        pd += np.var(np.log(scipy.stats.norm.pdf(Y[i],loc=np.dot(theta,X[i].T),scale=sigma_std)))
-    return lppd(fit_obj,X,Y,n_trials) - pd
-
-
-def get_bclass(filename,prior,likelihood,path = "/home/mboos/Work/Bayesian Updating/Data/"):
-    """Returns N x 2 array the first column consisting of 1/2 the second of the posterior_probability
-    likelihood needs to be a dict with likelihood values for 1/2"""
-    with open(path+filename) as bc_file:
-        #second array expression maps the event rare/freq 2/1 to its log likelihood ratio and sums them up with the log prior ratio
-        return np.array([ (int(line.strip("\n").split(" ")[-1]),np.log(prior/(1-prior))+fsum(map(lambda x : np.log(likelihood[x]/(1-likelihood[x])),map(abs,map(int,line.strip("\n").split(" ")))))) for line in bc_file])
-
-def get_bclass_diff(filename,likelihood,path = "/home/mboos/Work/Bayesian Updating/Data/"):
-    """Returns N x 2 array, first column consisting of 1/2 the second of the log-odds likelihood of that ball"""
-    lo = lambda x : np.log(likelihood[x]/(1-likelihood[x]))
-    with open(path+filename) as bc_file:
-        return np.array([ (int(line.strip("\n").split(" ")[-1]),lo(map(abs,map(int,line.strip("\n").split(" ")))[-1])) for line in bc_file])
-
-    
-    
-    
-def get_failed_epochs(filename,path = "/home/mboos/Work/Bayesian Updating/Data/"):
-    """Returns an array with 0 everywhere where an epoch failed in the sequence"""
-    with open(path+filename) as ep_file:
-        return np.array([ 0 if "-" in line else 1 for line in ep_file])   
+    def fit(self,X,y,n_jobs = 1):
+        linreg = LinearRegression()
+        self.correlations = np.array([linreg.fit(x[:,None],y).coef_ for x in X.T])
         
-def rereference(dmat):
-    """returns ndarray of the data re-referenced with the average over all electrodes, argument dmat in form chan x time x epoch"""
-    return dmat - np.mean(dmat,axis=0)
-    
-def k_bin_average(dmat,k):
-    """returns ndarray with k timebins (average of timevalues), argument dmat in form chan x time x epoch"""
-    return np.array([ np.mean(ar,axis=1) for ar in np.array_split(dmat,k,axis=1)]).swapaxes(0,1)
-    
-def plot_ERPs_per_posterior(dmat,ep_post_u,chan=4):
-    """plots each ERP for each unique posterior"""
-    ep_posterior = np.round(ep_post_u,decimals=2) 
-    for sp,n in enumerate(np.unique(ep_posterior)):
-        for i in np.where(ep_posterior==n)[0]:
-            subplot(3,3,sp+1)
-            plot(np.linspace(0,1200,dmat.shape[1]),dmat[chan,:,i],"b")
-            title("Posterior = "+str(logist(n)))
-
-def get_average_ERPs_per_posterior(dmat,ep_post_u,chan=4):
-    """Returns an array M x N with posteriors M and time points N"""
-    ep_posterior = np.round(ep_post_u,decimals=2)
-    return np.array([ np.mean(dmat[chan,:,ep_posterior==n],axis=0) for n in np.unique(ep_posterior)])
+    def transform(self,X):
+        try:
+            self.correlations
+        except NameError:
+            print("Need to fit first")
+        return X[:,(np.abs(self.correlations) >= self.correlation_threshold)[:,0] ]
 
 
+uct = UnivariateCorrelationThreshold()
+scaler = StandardScaler()
+pca = PCA()
+linreg = LinearRegression()
+supervisedPCA = Pipeline([('scaler',scaler),('correlation threshold',uct),('PCA',pca),('Linear Regression',linreg)])
 
+sPCA_params = {'uct__correlation_threshold' : [0.2,0.3,0.4,0.5],'pca__n_components' : [3,5,7,10,15,20]}
+
+#%%
 #very simple model with most extreme case: average the amplitude over the period 0-500 ms (or similar)
 #then regress with log-odds or something similar
-#%%
+
 eeg_model_for_one = """
 data {
 
@@ -446,7 +294,48 @@ X ~ normal(amplitudes*theta,sigma_std);
 }
 """
 
+#%%
+#EEG-model for encoding (hierarchical) with grand average ERP
+eeg_model_for_all = """
+data {
 
+
+int<lower=0> n_chan;
+int<lower=0> n_bin;
+int<lower=0> n_pb;
+//more efficient?
+real dats[n_chan,n_bin,n_ep];
+int<lower=1,upper=n_pb> pbs[n_ep]; 
+vector[n_ep] X;
+}
+parameters {
+//more efficient?
+real p_vec[n_chan,n_bin,n_pb];
+//define variance
+real<lower=0,upper=1000> sigma;
+real h_mu[n_chan,n_bin];
+real<lower=0> h_sigma;
+
+}
+model {
+
+for (i in 1:n_bin)
+    for (j in 1:n_chan)
+        h_mu[j,i] ~normal(0,10);
+
+
+//prior here, probably normal
+for (i in 1:n_bin)
+    for (j in 1:n_chan)    
+        p_vec[j,i] ~ normal(h_mu[j,i],h_sigma);
+
+
+for (i in 1:n_chan)
+    for (j in 1:n_bin)
+    dats[i,j,p] ~ normal(X[p]*p_vec[i,j,pbs[p]],sigma); //very inefficient
+
+}
+"""
 #%%
 #maybe do some visual inspection first
 #link data to log-odds
@@ -577,6 +466,7 @@ for fn in files:
         
 #%%
 #get the KULLBACK-LEIBLER-DIVERGENCE
+#KLD for last 2 balls
 kld_dict = dict()
 
 for fn in files:
@@ -595,13 +485,32 @@ for fn in files:
         kld_dict[fn[4:6]] = kld[np.logical_and(f_ep==1,np.tile([0,0,1,1],f_ep.size/4)==1),1]
         
         
+#KLD for all balls
+#STILL TODO
 
+for fn in files:
+    if fn.startswith("TS") and pattern_TS in fn:
+        f_ep = get_failed_epochs(fn)
+        kld = kld_vec(fn,prior,likelihood)
+        #re-reference and average over k bins
+        #also think about better way to ensure the result is unique!
+        curr = k_bin_average(rereference(loadmat(path_mat+filter(lambda x : fn[4:6] in x and pattern in x and "epochs" in x,mat_files)[0])["EEGdata"][:30,50:,:]),nbin)
+        if curr.shape[2] != sum(kld[:,0]>0):
+            continue
+        if f_ep.size % 4 != 0:
+            print "error at " + fn
+            break
+        mat_dict[fn[4:6]] = curr[:,:,np.logical_and((f_ep[kld[:,0]>0])==1,np.tile([0,0,1,1],f_ep.size/4)[kld[:,0]>0]==1)]
+        kld_dict[fn[4:6]] = kld[np.logical_and(f_ep==1,np.tile([0,0,1,1],f_ep.size/4)==1),1]
+        
+ 
 #%%
 gammas_exp80 = np.array([2.9,2.5,2.0,2.2,2.5,1.7,3.8,3.1,3.8,2.6,3.0,3.9,1.9,3.9,1.7,1.6]).T
 #pnull in log-odds
 pnull_exp80 = np.array([-1.5,-1.6,-1.9,0.2,-0.8,-1.8,-1.0,0.8,-1.6,-2.4,-2.5,-1.0,-2.4,-1.0,-0.2,-1.5]).T
 #now you can transform the bc_dict values for every person
 
+#%%
 for k in bc_dict.keys():
     bc_dict[k] = bc_dict[k]*gammas_exp80[int(k)-1] + pnull_exp80[int(k)-1]*(1-gammas_exp80[int(k)-1])
 
@@ -769,6 +678,7 @@ for sp,n in enumerate(np.unique(np.round(bclass[:,1],decimals=2))):
 
 
 #%%
+
 #########################################################
 #   INTERVAL FEATURE EXTRACTION                         #
 #                                                       #
@@ -790,7 +700,7 @@ for sp,n in enumerate(np.unique(np.round(bclass[:,1],decimals=2))):
 
 #######################################
 #NOW FOR ALL PARTICIPANTS
-#FOR ICA
+#FOR ICA OR FFT
 ########################################
 likelihood = { 1 : 0.3, 2: 0.7 }
 prior = 0.2
@@ -806,22 +716,27 @@ pattern = "exp80"
 
 bc_dict = dict()
 mat_dict = dict()
+brar_dict = dict()
 
 #%%
 #strip VEOH,HEOG electrodes
 
 
-#bc_dict has only one column in an entry
+
 
 for fn in files:
     if fn.startswith("TS") and pattern_TS in fn:
         f_ep = get_failed_epochs(fn)
         bclass = get_bclass(fn,prior,likelihood)
-        curr = loadmat(path_mat+filter(lambda x : fn[4:6] in x and pattern in x and "epochs" in x,mat_files)[0])["EEGdata"][:30,50:,:]
+        #re-reference and average over k bins
+        #also think about better way to ensure the result is unique!
+        curr = rereference(loadmat(path_mat+filter(lambda x : fn[4:6] in x and pattern in x and "epochs" in x,mat_files)[0])["EEGdata"][:30,25:,:])
         if curr.shape[2] != sum(bclass[:,0]>0):
             continue
         mat_dict[fn[4:6]] = curr[:,:,(f_ep[bclass[:,0]>0])==1]
         bc_dict[fn[4:6]] = bclass[f_ep==1,1]
+
+        
 
 #%%
 #for one person
@@ -877,6 +792,7 @@ for k in bc_dict.keys():
 sizes_list = [ mat_dict[m].shape[2] for m in sorted(mat_dict.keys()) ]
 pb_epoch_index = [ sum(sizes_list[:i])*250 for i in xrange(1,len(sizes_list))]
 
+pb_epoch_index = [ sum(sizes_list[:i])*75 for i in xrange(1,len(sizes_list))]
 #now get the activations back into original form
 
 all_sources = all_sources.T
@@ -884,6 +800,7 @@ pb_list_of_sources = np.hsplit(all_sources,pb_epoch_index)
 
 source_dict = { k : np.reshape(pb_list_of_sources[i],(30,-1,250)) for i,k in enumerate(sorted(mat_dict.keys())) }
 
+source_dict = { k : np.reshape(pb_list_of_sources[i],(30,-1,75)) for i,k in enumerate(sorted(mat_dict.keys())) }
 #now get the means
 
 mean_source_per_post = dict()
@@ -952,7 +869,7 @@ source_data["n_ft"] += 1
 #%%
 
 #start model
-fit = pystan.stan(model_code=eeg_model_reversed_ft_std, data=source_data,iter=500, chains=5)
+#fit = pystan.stan(model_code=eeg_model_reversed_ft_std, data=source_data,iter=500, chains=5)
 
 #Kullback Leibler Divergence
 nbin = 1#doesnt matter, curr isnt used, only to ensure that we have an estimate of the number of epochs 
@@ -972,6 +889,48 @@ for fn in files:
             break
         kld_dict[fn[4:6]] = kld[f_ep==1,1]
 
+
+#%%
+nbin = 1#doesnt matter, curr isnt used, only to ensure that we have an estimate of the number of epochs 
+predictive_surprise_dict = dict()
+
+for fn in files:
+    if fn.startswith("TS") and pattern_TS in fn:
+        f_ep = get_failed_epochs(fn)
+        predsurp = predictive_surprise_vec(fn,likelihood)
+        #re-reference and average over k bins
+        #also think about better way to ensure the result is unique!
+        curr = k_bin_average(rereference(loadmat(path_mat+filter(lambda x : fn[4:6] in x and pattern in x and "epochs" in x,mat_files)[0])["EEGdata"][:30,50:,:]),nbin)
+        if curr.shape[2] != sum(predsurp[:,0]>0):
+            continue
+        if f_ep.size % 4 != 0:
+            print "error at " + fn
+            break
+        predictive_surprise_dict[fn[4:6]] = predsurp[f_ep==1,1]
+
+
+#%%
+#for distorted KLDs
+
+nbin = 1#doesnt matter, curr isnt used, only to ensure that we have an estimate of the number of epochs 
+kld_dict = dict()
+
+for fn in files:
+    if fn.startswith("TS") and pattern_TS in fn:
+        f_ep = get_failed_epochs(fn)
+        kld = kld_vec_distort(fn,prior,likelihood,gammas_exp80[int(fn[4:6])-1],pnull_exp80[int(fn[4:6])-1])
+        #re-reference and average over k bins
+        #also think about better way to ensure the result is unique!
+        curr = k_bin_average(rereference(loadmat(path_mat+filter(lambda x : fn[4:6] in x and pattern in x and "epochs" in x,mat_files)[0])["EEGdata"][:30,50:,:]),nbin)
+        if curr.shape[2] != sum(kld[:,0]>0):
+            continue
+        if f_ep.size % 4 != 0:
+            print "error at " + fn
+            break
+        kld_dict[fn[4:6]] = kld[f_ep==1,1]
+
+
+#%%
 source_data = { "n_ep" : sum(n_ep_list),"n_ft" : 16*10, "amplitudes" : np.vstack([source_d_data[m][...,i].flatten() for m in sorted(source_d_data.keys()) for i in xrange(source_d_data[m].shape[-1])]),"X" : np.concatenate([kld_dict[k] for k in sorted(kld_dict.keys())])}
 
 #now standardize them
@@ -982,3 +941,318 @@ source_data["amplitudes"] = (source_data["amplitudes"] - np.mean(source_data["am
 #standardizing KLDs
 source_data["X"] = (source_data["X"] - np.mean(source_data["X"]))/np.std(source_data["X"])
 fit = pystan.stan(model_code=eeg_model_kld_reversed_ft_std , data=source_data,iter=500, chains=5)
+
+#this is for testing the model per sklearn procedures
+#getting the data in the form trials x features
+skl_data = np.vstack([ np.swapaxes(source_dict[k],1,2)[...,i].flatten() for k in sorted(source_dict.keys()) for i in xrange(source_dict[k].shape[1])])
+klds = np.concatenate([kld_dict[k] for k in sorted(kld_dict.keys())])
+
+
+#%%
+#frequency representation
+#compute fft and stack positive frequencies as features
+allfreqdata = [ np.reshape(fft(mat_dict[a][:,50:100,:],axis=1)[:,:25,:],(-1,mat_dict[a].shape[-1]),order='F') for a in sorted(mat_dict.keys())]
+allfreqdata = np.hstack(allfreqdata)
+allfreqdata = np.swapaxes(allfreqdata,0,1)
+
+#%%
+#sklearn
+#which machine learning technique would make sense here?
+#first try kernel pca
+alldata = [ np.reshape(mat_dict[a],(-1,mat_dict[a].shape[-1]),order='F') for a in sorted(mat_dict.keys()) ]
+alldata = np.hstack(alldata)
+alldata = np.swapaxes(alldata,0,1)
+
+brar = np.concatenate([brar_dict[a] for a in sorted(brar_dict.keys())]) -1
+
+#log-odds
+Y = np.concatenate([bc_dict[a] for a in sorted(bc_dict.keys())])
+
+#klds
+Y = np.concatenate([kld_dict[a] for a in sorted(kld_dict.keys())])
+
+
+Yscaler = StandardScaler()
+
+newY = Yscaler.fit_transform(Y)
+
+scaler = StandardScaler()
+
+#times
+alldata = scaler.fit_transform(alldata)
+
+
+#or for frequencies
+allfreqdata = scaler.fit_transform(allfreqdata)
+
+#alldata w/ ball rare/non-rare information
+alldata = np.hstack((alldata,brar[:,None]))
+
+
+#times
+X_train,X_test,Y_train,Y_test = train_test_split(alldata,newY,test_size=0.3)
+
+#frequencies
+X_train,X_test,Y_train,Y_test = train_test_split(allfreqdata,newY,test_size=0.3)
+
+svr = SVR(cache_size=1500)
+svr_params = { 'C' : [1e-2,1,1e2] , 'epsilon' : [1e-3,1e-2,1e-1]  }
+
+#fit without transforms 0.009
+#fit with kld 0.017
+
+#test with newy hier. interc.
+#takes looong
+
+enet_cv = ElasticNetCV(l1_ratio=[0.1,0.3,0.5,0.7,0.9],max_iter=2000)
+enet_cv.fit(X_tr_new,Y_train)
+
+rcv = RidgeCV(alphas=[1e-2,1e-1,1,10])
+#rcv.fit(X_train,Y_train)
+
+svr_gs = GridSearchCV(svr,svr_params,verbose=1,n_jobs=-1)
+#svr_gs.fit(X_train,Y_train)
+
+
+#%%
+#visualization of posterior ERPs averaged over Pbs and epochs
+#for chan Fz
+posteriors = np.unique(np.round(bc_dict["01"],decimals=2))
+
+avr_ERP_p_post_list = [get_average_ERPs_per_posterior(mat_dict[k],bc_dict[k],chan=4) for k in sorted(mat_dict.keys())] 
+
+ERP_p_post = np.array([np.mean([pb[n,:] for pb in avr_ERP_p_post_list if pb.shape[0] > n ],axis=0) for n,posterior in enumerate(posteriors) ])
+
+#%%
+#plot it
+coolwarm = plt.get_cmap('coolwarm')
+nm = colors.Normalize(vmin=-5,vmax=5)
+scm_cm = plt.cm.ScalarMappable(norm=nm,cmap=coolwarm)
+
+plt.figure()
+plt.hold(True)
+for i,post in enumerate(posteriors):
+    cval = (post-np.min(posteriors))/(np.max(posteriors)-np.min(posteriors))
+    plot(np.linspace(0,1000,ERP_p_post.shape[1]),ERP_p_post[i,:],c=scm_cm.to_rgba(post))
+plt.xlabel('Time in ms')
+plt.ylabel('Amplitude in micro Volt')
+plt.title('Average ERPs for different posteriors in log-odds form for channel ' + chan_list[j])
+plt.legend(map(lambda x : "lo: " + str(x) + " p: " + str(np.round(logist(x),decimals=3))[1:],posteriors))
+savefig('posterior_ERPs_'+chan_list[j]+'.png')
+plt.close()
+#%%
+#creating a lot of plots for average ERPs per post
+#for channels
+
+#now from -100 ms and with N per posterior
+interesting_ones = ['Fz','FCz','Cz','Pz','Oz']
+posteriors = np.unique(np.round(bc_dict["01"],decimals=2))
+posterior_N = [ np.sum(np.sum(np.round(bc_dict[k],decimals=2) == p) for k in bc_dict.keys()) for p in posteriors  ]
+
+
+for channel in interesting_ones:
+    avr_ERP_p_post_list = [get_average_ERPs_per_posterior(mat_dict[k],bc_dict[k],chan=np.where(chan_list==channel)[0]) for k in sorted(mat_dict.keys())] 
+    ERP_p_post = np.array([np.mean([pb[n,:] for pb in avr_ERP_p_post_list if pb.shape[0] > n ],axis=0) for n,posterior in enumerate(posteriors) ])
+    
+    
+    #plot it
+    coolwarm = plt.get_cmap('coolwarm')
+    nm = colors.Normalize(vmin=-5,vmax=5)
+    scm_cm = plt.cm.ScalarMappable(norm=nm,cmap=coolwarm)
+    
+    fig = plt.figure()
+    fig.set_size_inches(12,10)
+    plt.hold(True)
+    for i,post in enumerate(posteriors):
+        #cval = (post-np.min(posteriors))/(np.max(posteriors)-np.min(posteriors))
+        plot(np.linspace(-100,1000,ERP_p_post.shape[1]),ERP_p_post[i,:],c=scm_cm.to_rgba(post))
+    plt.xlim(-100,1000)
+    plt.xlabel('Time in ms')
+    plt.ylabel('Amplitude in micro Volt')
+    plt.title('Average ERPs for different posteriors in log-odds form for channel ' + channel)
+    plt.legend(map(lambda x : "lo: " + str(x[0]) + " p: " + str(np.round(logist(x[0]),decimals=3))[1:] + " N="+str(x[1]),zip(posteriors,posterior_N)))
+    savefig('new_posterior_ERPs_'+channel+'.pdf')
+    plt.close()
+    
+#%%
+#creating plots for kld
+#expects kld_dict
+#IS KLD WRONG? LOOKS LIKE IT
+
+interesting_ones = ['Fz','FCz','Cz','Pz','Oz']
+klds = np.unique(np.round(kld_dict["01"],decimals=3))
+kld_dict = { k : np.round(kld_dict[k],decimals=3) for k in sorted(kld_dict.keys())} 
+kld_N = [ np.sum(np.sum(np.round(kld_dict[k],decimals=3) == p) for k in kld_dict.keys()) for p in klds  ]
+
+
+for channel in interesting_ones:
+    avr_ERP_p_kld_list = [ np.array([ np.mean(mat_dict[k][np.where(chan_list==channel)[0],:,kld_dict[k]==i],axis=0) for i in np.unique(kld_dict[k]) ]) for k in sorted(mat_dict.keys())] 
+    ERP_p_kld = np.array([np.mean([pb[n,:] for pb in avr_ERP_p_kld_list if pb.shape[0] > n ],axis=0) for n,kld in enumerate(klds) ])
+    
+    
+    #plot it
+    coolwarm = plt.get_cmap('coolwarm')
+    nm = colors.Normalize(vmin=0,vmax=0.1)
+    scm_cm = plt.cm.ScalarMappable(norm=nm,cmap=coolwarm)
+    
+    fig = plt.figure()
+    fig.set_size_inches(12,10)
+    plt.hold(True)
+    for i,kld in enumerate(klds):
+        plot(np.linspace(-100,1000,ERP_p_kld.shape[1]),ERP_p_kld[i,:],c=scm_cm.to_rgba(kld))
+    plt.xlim(-100,1000)
+    plt.xlabel('Time in ms')
+    plt.ylabel('Amplitude in micro Volt')
+    plt.title('Average ERPs for different posteriors in log-odds form for channel ' + channel)
+    plt.legend(map(lambda x : "kld: " + str(x[0]) + " N=" + str(x[1]),zip(klds,kld_N)))
+    savefig('new_kld_ERPs_'+channel+'.pdf')
+    plt.close()
+    
+    
+#%%
+#plots for distorted probabilities
+
+for k in bc_dict.keys():
+    bc_dict[k] = np.round(bc_dict[k],decimals=2)
+
+for channel in interesting_ones:
+    avr_ERP_p_post_list = [get_average_ERPs_per_posterior(mat_dict[k],bc_dict[k],chan=np.where(chan_list==channel)[0]) for k in sorted(mat_dict.keys())] 
+    #ERP_p_post = np.array([np.mean([pb[n,:] for pb in avr_ERP_p_post_list if pb.shape[0] > n ],axis=0) for n,posterior in enumerate(posteriors) ])
+    
+    
+    #plot it
+    coolwarm = plt.get_cmap('coolwarm')
+    nm = colors.Normalize(vmin=-15,vmax=10)
+    scm_cm = plt.cm.ScalarMappable(norm=nm,cmap=coolwarm)
+    
+    fig = plt.figure()
+    fig.set_size_inches(12,10)
+    plt.hold(True)
+    for j,ERP_p_post in enumerate(avr_ERP_p_post_list):
+        for i,post in enumerate(np.unique(bc_dict[list(sorted(bc_dict.keys()))[j]])):
+            #cval = (post-np.min(posteriors))/(np.max(posteriors)-np.min(posteriors))
+            plot(np.linspace(-100,1000,ERP_p_post.shape[1]),ERP_p_post[i,:],c=scm_cm.to_rgba(post))
+    plt.xlim(-100,1000)
+    plt.xlabel('Time in ms')
+    plt.ylabel('Amplitude in micro Volt')
+    plt.title('Average ERPs for different posteriors in log-odds form for channel ' + channel)
+    savefig('individual_posterior_ERPs_'+channel+'.pdf')
+    plt.close()
+    
+
+#%%
+#without gammas applied
+#but distorts/averages
+#now from -100 ms and with N per posterior
+interesting_ones = ['Fz','FCz','Cz','Pz','Oz']
+posteriors = np.unique(np.round(bc_dict["01"],decimals=2))
+#posterior_N = [ np.sum(np.sum(np.round(bc_dict[k],decimals=2) == np.unique(np.round(bc_dict[k],decimals=2))[p]) for k in bc_dict.keys() if p < len(np.unique(np.round(bc_dict[k],decimals=2)))) for p in xrange(len(posteriors))  ]
+posterior_N = [ np.sum(np.sum(np.round(bc_dict[k],decimals=2) == p) for k in bc_dict.keys()) for p in posteriors  ]
+
+#weigh by distorted probability of pb
+avr_disto_posteriors = [ np.round(np.sum(np.sum(np.round(bc_dict[k],decimals=2) == p)*distort_logodds(p,gammas_exp80[i],pnull_exp80[i]) for i,k in enumerate(sorted(mat_dict.keys())))/p_N,decimals=2) for p,p_N in zip(posteriors,posterior_N)] 
+
+for channel in interesting_ones:
+    avr_ERP_p_post_list = [get_average_ERPs_per_posterior(mat_dict[k],bc_dict[k],chan=np.where(chan_list==channel)[0]) for k in sorted(mat_dict.keys())] 
+    ERP_p_post = np.array([np.mean([pb[n,:] for pb in avr_ERP_p_post_list if pb.shape[0] > n ],axis=0) for n,posterior in enumerate(posteriors) ])
+    
+    
+    #plot it
+    coolwarm = plt.get_cmap('coolwarm')
+    nm = colors.Normalize(vmin=-12,vmax=12)
+    scm_cm = plt.cm.ScalarMappable(norm=nm,cmap=coolwarm)
+    
+    fig = plt.figure()
+    fig.set_size_inches(12,10)
+    plt.hold(True)
+    for i,post in enumerate(avr_disto_posteriors):
+        #cval = (post-np.min(posteriors))/(np.max(posteriors)-np.min(posteriors))
+        plot(np.linspace(-100,1000,ERP_p_post.shape[1]),ERP_p_post[i,:],c=scm_cm.to_rgba(post))
+    plt.xlim(-100,1000)
+    plt.xlabel('Time in ms')
+    plt.ylabel('Amplitude in micro Volt')
+    plt.title('Average ERPs for different posteriors in log-odds form for channel ' + channel)
+    plt.legend(map(lambda x : "lo: " + str(x[0]) + " p: " + str(np.round(logist(x[0]),decimals=3))[1:] + " N="+str(x[1]),zip(avr_disto_posteriors,posterior_N)))
+    savefig('weighted_posterior_ERPs_'+channel+'.pdf')
+    plt.close()
+    
+#%%
+#create X,y representation of data using grand average
+interesting_ones = ['Fz','FCz','Cz','Pz','Oz']
+#list of participants, each entry the concatenated timecourses from 0 to 800 ms (4 ms sampling, no time binning)
+avr_ERP_p_post_list = [np.concatenate([get_average_ERPs_per_posterior(mat_dict[k],bc_dict[k],chan=np.where(chan_list==channel)[0])[:,50:] for channel in interesting_ones],axis=1) for k in sorted(mat_dict.keys())]
+
+#%%
+#get rid of n < 4 values
+avr_ERP_p_post_list = [ERPs[[nr for nr,p in enumerate(np.unique(np.round(bc_dict[sorted(bc_dict.keys())[nerp]],decimals=2))) if np.sum(np.round(bc_dict[sorted(bc_dict.keys())[nerp]],decimals=2) == p) >= 4 ],:] for nerp,ERPs in enumerate(avr_ERP_p_post_list)]
+
+#create corresponding y
+y = np.concatenate([[p for p in np.unique(np.round(bc_dict[k],decimals=2)) if np.sum(np.round(bc_dict[k],decimals=2) == p) >= 4  ] for k in sorted(bc_dict.keys())])
+
+
+#%%
+#now concatenate on axis of posteriors
+X = np.concatenate(avr_ERP_p_post_list,axis=0)
+
+#create corresponding y
+y = np.concatenate([np.unique(np.round(bc_dict[k],decimals=2))  for k in sorted(bc_dict.keys())])
+
+
+scaler = StandardScaler()
+
+#times
+X = scaler.fit_transform(X)
+
+X_train,X_test,Y_train,Y_test = train_test_split(X,y,test_size=0.1)
+
+#enet_cv = ElasticNetCV(l1_ratio=[0.1,0.3,0.5,0.7,0.9],max_iter=2000)
+
+#ridge = Ridge(alpha=1.0).fit(X_train,Y_train)
+
+#%%
+ralpha = 0.000001
+
+coefs = np.reshape([ Ridge(alpha=ralpha).fit(Y_train[:,None],xnow).coef_ for xnow in X_train.T],(5,200))
+
+
+#%%
+rcv = RidgeCV(alphas=[1e-5,1e-4,1e-3,1e-2,1e-1,1,1e2])
+rcv.fit(X_train,Y_train)
+coefs = np.reshape(rcv.coef_,(5,200))
+
+#%%
+#visualize
+
+plt.imshow(coefs,aspect='auto',interpolation='nearest')
+xticks([0,50,100,150,200],['0 ms','200 ms','400 ms','600 ms','800 ms'])
+yticks([0,1,2,3,4],interesting_ones)
+plt.colorbar()
+
+#%%
+#FOR KLDs or DISTORTED KLDs
+#create X,y representation of data using grand average
+interesting_ones = ['Fz','FCz','Cz','Pz','Oz']
+#list of participants, each entry the concatenated timecourses from 0 to 800 ms (4 ms sampling, no time binning)
+avr_ERP_p_kld_list = [ np.concatenate([np.array([ np.mean(mat_dict[k][np.where(chan_list==channel)[0],:,kld_dict[k]==i],axis=0) for i in np.unique(kld_dict[k]) ])[:,50:] for channel in interesting_ones],axis=1) for k in sorted(mat_dict.keys())] 
+
+#avr_ERP_p_kld_list = [np.concatenate([get_average_ERPs_per_posterior(mat_dict[k],kld_dict[k],chan=np.where(chan_list==channel)[0])[:,50:] for channel in interesting_ones],axis=1) for k in sorted(mat_dict.keys())]
+#%%
+#get rid of n < 4 values
+avr_ERP_p_kld_list = [ERPs[[nr for nr,p in enumerate(np.unique(kld_dict[sorted(kld_dict.keys())[nerp]])) if np.sum(kld_dict[sorted(kld_dict.keys())[nerp]] == p) >= 4 ],:] for nerp,ERPs in enumerate(avr_ERP_p_kld_list)]
+
+
+
+#%%
+#now concatenate on axis of posteriors
+X = np.concatenate(avr_ERP_p_kld_list,axis=0)
+
+#create corresponding y
+y = np.concatenate([[p for p in np.unique(kld_dict[k]) if np.sum(kld_dict[k]== p) >= 4] for k in sorted(kld_dict.keys())])
+
+
+scaler = StandardScaler()
+
+#times
+X = scaler.fit_transform(X)
+
+X_train,X_test,Y_train,Y_test = train_test_split(X,y,test_size=0.1)
