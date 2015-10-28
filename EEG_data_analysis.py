@@ -58,7 +58,6 @@ def get_coefficients(encoding,X,y,normalize=True,actfilt=True):
     return coefs
 
 
-
 chan_list = np.array(["Fp1","Fp2","F7","F3","Fz","F4","F8","FC5","FC1","FC2",\
         "FC6","T7","C3","Cz","C4","T8","CP5","CP1","CP2","CP6","P7","P3","Pz",\
         "P4","P8","TP9","TP10","Oz","O2","O1"])
@@ -331,21 +330,6 @@ if model_type == 'normal':
     # In[16]:
 
     # In[6]:
-
-    normalize = True
-
-    coefs = get_coefficients(encoding,X_st,y_st)
-    
-    plt.imshow(coefs,aspect='auto',interpolation='nearest')
-    plt.xticks([0,50,100,150,200],['0 ms','200 ms','400 ms','600 ms','800 ms'])
-    plt.yticks([0,1,2,3,4],interesting_ones)
-    plt.colorbar()
-    plt.xlabel('ERP timecourse')
-    plt.ylabel('Channels')
-    plt.title('Single Trial {} coefficients w/ undistorted probabilities  '.format({True:'Encoding',False:'Decoding'}[encoding]))
-    plt.savefig(output_dir+'avr_ERP_unverzerrte_lo_probs.pdf')
-
-    plt.clf()
 
     # ### Correlations with distorted (log-odds) probabilities
 
