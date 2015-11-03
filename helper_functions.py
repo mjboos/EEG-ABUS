@@ -252,4 +252,8 @@ def get_average_ERPs_per_pooled_posteriors(dmat,ep_post_u,cut_off_list,chan=4):
     
     return np.array([ np.mean(dmat[chan,:,np.logical_and(ep_post_u>=cut_off_list[n-1],ep_post_u < cut_off_list[n]) ],axis=0) for n in xrange(1,len(cut_off_list))])    
 
+def rolling_window(a, window):
+    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+    strides = a.strides + (a.strides[-1],)
+    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
      
