@@ -35,7 +35,7 @@ real pzero[npb];
 model {
 
 mu_gam ~ normal(1,10) T[0,];
-mu_pz ~ normal(0,2);
+mu_pz ~ normal(0,10);
 gam ~ normal(mu_gam,tau_gam);
 pzero ~ normal(mu_pz,tau_pz);
 
@@ -79,19 +79,12 @@ likelihood = 0.9
 
 posterior = np.array([ (prior*likelihood**i*(1-likelihood)**(4-i)) / ((prior*likelihood**i*(1-likelihood)**(4-i))+((1-prior)*(1-likelihood)**i*likelihood**(4-i))) for i in xrange(5) ])
 lo_x = np.log(posterior/(1-posterior))
-#and again drop first ball/2 cases
 
-
-#%%
-#ONLY FOR 3 BALLS AND MODEL WITH NON-UNIQUE POSTERIORS
 #create the data-structure
 data_cc = {"npb" : npb,"cases":cases,"N":N_cc.astype(int),"y":rare_urn_cc.astype(int),"X":lo_x}
 #fit now
-fit = pystan.stan(model_code=hierarchic_model, data=data_cc,iter=40000, chains=20)
+fit = pystan.stan(model_code=hierarchic_model, data=data_cc,iter=10000, chains=1)
 #%%
-#MODEL WITH ONLY UNIQUE POSTERIORS 
-#try to compress X, so same values are added
-#first round
-data_uc = {"npb" : npb,"cases":cases,"N":N_uc.astype(int),"y":rare_urn_uc.astype(int),"X":lo_x}
+#data_uc = {"npb" : npb,"cases":cases,"N":N_uc.astype(int),"y":rare_urn_uc.astype(int),"X":lo_x}
 
-fit = pystan.stan(model_code=hierarchic_model, data=data_uc,iter=40000, chains=20)
+#fit = pystan.stan(model_code=hierarchic_model, data=data_uc,iter=40000, chains=20)

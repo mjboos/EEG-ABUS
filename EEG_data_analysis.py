@@ -25,7 +25,7 @@ import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 from sklearn.linear_model import ElasticNetCV,RidgeCV,Ridge,BayesianRidge
-from sklearn.cross_validation import train_test_split
+from sklearn.cross_validation import cross_val_score
 from sklearn.grid_search import GridSearchCV,RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
@@ -33,6 +33,29 @@ from sklearn.decomposition import PCA
 from sklearn.svm import SVR,NuSVR
 from scipy.fftpack import fft
 
+
+def get_coefficients_and_score(encoding, X, y, normalize=True, actfilt=True):
+    '''Returns coefficients:
+    Paramters:
+    encoding    -   Encoding (True) or Decoding (False)
+    X           -   EEG Timeseries
+    y           -   Probability representation
+    '''
+    if encoding:
+	    return get_coefficients(encoding, X, y, normalize=normalize, actfilt=actfilt)
+    if actfilt:
+	    yscaler = StandardScaler()
+	    xscaler = StandardScaler()
+	    Xcov = np.cov(X,rowvar=0)
+	    y = yscaler.fit_transform(y)
+	    X = xscaler.fit_transform(X)
+	    coefs = BayesianRidge(normalize=False).fit(X,y).coef_
+	    coefs = np.reshape(Xcov.dot(coefs),(5,200))
+	    score = cross_val_score(BayesianRidge(normalize=False), X, y, cv=8)
+    else:
+	    coefs = np.reshape(BayesianRidge(normalize=normalize).fit(X,y).coef_,(5,200))
+	    score = cross_val_score(BayesianRidge(normalize=normalize), X, y, cv=8)
+    return (score, coefs)
 
 
 def get_coefficients(encoding,X,y,normalize=True,actfilt=True):
